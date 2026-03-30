@@ -9,6 +9,8 @@ import {
   TrendingUp,
   Wifi,
   ThermometerSun,
+  Plug,
+  Radio,
 } from "lucide-react";
 
 interface Props {
@@ -29,18 +31,28 @@ function Metric({
   color?: string;
 }) {
   return (
-    <Card className="p-3 flex items-start gap-3 bg-card/50 border-card-border">
+    <Card className="p-2 md:p-3 flex items-start gap-2 md:gap-3 bg-card/50 border-card-border">
       <div className={`mt-0.5 ${color}`}>
-        <Icon className="w-4 h-4" />
+        <Icon className="w-3.5 h-3.5 md:w-4 md:h-4" />
       </div>
       <div className="flex flex-col min-w-0">
-        <span className="text-xs text-muted-foreground truncate">{label}</span>
+        <span className="text-[10px] md:text-xs text-muted-foreground truncate">{label}</span>
         <div className="flex items-baseline gap-1">
-          <span className={`text-base font-semibold tabular-nums ${color}`}>{value}</span>
-          <span className="text-xs text-muted-foreground">{unit}</span>
+          <span className={`text-sm md:text-base font-semibold tabular-nums ${color}`}>{value}</span>
+          <span className="text-[10px] md:text-xs text-muted-foreground">{unit}</span>
         </div>
       </div>
     </Card>
+  );
+}
+
+function SectionLabel({ icon: Icon, label, sublabel }: { icon: typeof Plug; label: string; sublabel: string }) {
+  return (
+    <div className="flex items-center gap-2 col-span-2 md:col-span-4 pt-1 first:pt-0">
+      <Icon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+      <span className="text-[11px] md:text-xs font-semibold text-foreground uppercase tracking-wider">{label}</span>
+      <span className="text-[10px] md:text-[11px] text-muted-foreground hidden md:inline">— {sublabel}</span>
+    </div>
   );
 }
 
@@ -51,26 +63,11 @@ export function MetricCards({ result }: Props) {
 
   return (
     <div className="grid grid-cols-2 md:grid-cols-4 gap-2" data-testid="metric-cards">
-      <Metric
-        label="Peak Flux"
-        value={result.peakFluxAtMount.toFixed(1)}
-        unit="µT"
-        icon={Activity}
-        color="text-blue-400"
-      />
-      <Metric
-        label="THD"
-        value={result.thd.toFixed(1)}
-        unit="%"
-        icon={Gauge}
-        color={result.thd > 15 ? "text-amber-400" : "text-emerald-400"}
-      />
-      <Metric
-        label="K-Factor"
-        value={result.kFactor.toFixed(2)}
-        unit=""
-        icon={TrendingUp}
-        color={result.kFactor > 4 ? "text-red-400" : "text-foreground"}
+      {/* ── Power Source ── */}
+      <SectionLabel
+        icon={Plug}
+        label="Power Source"
+        sublabel="Fundamental 60 Hz stray flux + solar"
       />
       <Metric
         label="Harvest (Mag)"
@@ -101,11 +98,39 @@ export function MetricCards({ result }: Props) {
         color={netColor}
       />
       <Metric
-        label="Min SOC"
+        label="Min SOC (24h)"
         value={(result.minSOC * 100).toFixed(1)}
         unit="%"
         icon={ThermometerSun}
         color={result.minSOC > 0.2 ? "text-emerald-400" : result.minSOC > 0.05 ? "text-amber-400" : "text-red-400"}
+      />
+      <Metric
+        label="Peak Flux"
+        value={result.peakFluxAtMount.toFixed(1)}
+        unit="µT"
+        icon={Activity}
+        color="text-blue-400"
+      />
+
+      {/* ── Monitored Signal ── */}
+      <SectionLabel
+        icon={Radio}
+        label="Monitored Signal"
+        sublabel="Harmonic content detected by sensing coil"
+      />
+      <Metric
+        label="THD"
+        value={result.thd.toFixed(1)}
+        unit="%"
+        icon={Gauge}
+        color={result.thd > 15 ? "text-amber-400" : "text-emerald-400"}
+      />
+      <Metric
+        label="K-Factor"
+        value={result.kFactor.toFixed(2)}
+        unit=""
+        icon={TrendingUp}
+        color={result.kFactor > 4 ? "text-red-400" : "text-foreground"}
       />
     </div>
   );

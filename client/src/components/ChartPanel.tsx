@@ -15,11 +15,11 @@ interface Props {
 
 function WaveformChart({ result }: Props) {
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 h-full">
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-2 md:gap-4 h-full overflow-y-auto md:overflow-hidden">
       {/* Waveform */}
-      <div className="flex flex-col">
+      <div className="flex flex-col min-h-[140px]">
         <h4 className="text-xs font-medium text-muted-foreground mb-1 px-1">
-          Sensed Voltage Waveform (1 cycle)
+          Sensed Waveform — What the Device Reports
         </h4>
         <div className="flex-1 min-h-0">
           <ResponsiveContainer width="100%" height="100%">
@@ -50,7 +50,7 @@ function WaveformChart({ result }: Props) {
       </div>
 
       {/* Spectrum */}
-      <div className="flex flex-col">
+      <div className="flex flex-col min-h-[140px]">
         <h4 className="text-xs font-medium text-muted-foreground mb-1 px-1">
           Harmonic Spectrum (THD: {result.thd.toFixed(1)}%)
         </h4>
@@ -97,7 +97,7 @@ function EnergyTimeline({ result }: Props) {
   return (
     <div className="flex flex-col h-full">
       <h4 className="text-xs font-medium text-muted-foreground mb-1 px-1">
-        24-Hour Energy Profile
+        24h Harvest (60 Hz Flux + Solar) vs Consumption
       </h4>
       <div className="flex-1 min-h-0">
         <ResponsiveContainer width="100%" height="100%">
@@ -224,10 +224,10 @@ function LoadProfile({ result }: Props) {
 export function ChartPanel({ result }: Props) {
   return (
     <Tabs defaultValue="waveform" className="h-full flex flex-col" data-testid="chart-panel">
-      <TabsList className="w-fit mx-2 mb-1">
-        <TabsTrigger value="waveform" className="text-xs">Signal</TabsTrigger>
-        <TabsTrigger value="energy" className="text-xs">Energy</TabsTrigger>
-        <TabsTrigger value="load" className="text-xs">Load Profile</TabsTrigger>
+      <TabsList className="w-fit mx-2 mb-1 mt-1">
+        <TabsTrigger value="waveform" className="text-[11px] md:text-xs px-2 md:px-3">Monitored Signal</TabsTrigger>
+        <TabsTrigger value="energy" className="text-[11px] md:text-xs px-2 md:px-3">Power Source</TabsTrigger>
+        <TabsTrigger value="load" className="text-[11px] md:text-xs px-2 md:px-3">Load &amp; SOC</TabsTrigger>
       </TabsList>
       <div className="flex-1 min-h-0 px-2 pb-2">
         <TabsContent value="waveform" className="h-full mt-0">

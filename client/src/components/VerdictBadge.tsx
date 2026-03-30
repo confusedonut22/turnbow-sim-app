@@ -28,13 +28,15 @@ export function VerdictBadge({ result }: Props) {
   }
 
   return (
-    <div className={`flex items-center gap-3 px-4 py-2 rounded-lg border ${bgClass}`} data-testid="verdict-badge">
-      <Icon className={`w-5 h-5 ${color}`} />
-      <div className="flex flex-col">
-        <span className={`text-sm font-semibold ${color}`}>{verdict}</span>
-        <span className="text-xs text-muted-foreground">
-          Confidence: {confidencePercent.toFixed(0)}% · Min SOC: {(minSOC * 100).toFixed(1)}%
-          {emergencyMinutes > 0 && ` · Backup: ${emergencyMinutes.toFixed(0)}min`}
+    <div className={`flex items-center gap-2 md:gap-3 px-2.5 md:px-4 py-1.5 md:py-2 rounded-lg border ${bgClass}`} data-testid="verdict-badge">
+      <Icon className={`w-4 h-4 md:w-5 md:h-5 shrink-0 ${color}`} />
+      <div className="flex flex-col min-w-0">
+        <span className={`text-xs md:text-sm font-semibold truncate ${color}`}>{verdict}</span>
+        <span className="text-[10px] md:text-xs text-muted-foreground truncate">
+          <span className="hidden md:inline">Confidence: </span>{confidencePercent.toFixed(0)}%
+          <span className="hidden md:inline"> · Min SOC: {(minSOC * 100).toFixed(1)}%</span>
+          <span className="md:hidden"> · {(minSOC * 100).toFixed(0)}%</span>
+          {emergencyMinutes > 0 && <span className="hidden md:inline"> · Backup: {emergencyMinutes.toFixed(0)}min</span>}
         </span>
       </div>
     </div>
