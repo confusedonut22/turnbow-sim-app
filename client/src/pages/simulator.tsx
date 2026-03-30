@@ -70,7 +70,7 @@ export default function Simulator() {
 
           {/* Metrics */}
           <div className="px-2 md:px-3 pb-2 md:pb-3">
-            <MetricCards result={result} />
+            <MetricCards result={result} config={config} />
           </div>
 
           {/* Charts */}

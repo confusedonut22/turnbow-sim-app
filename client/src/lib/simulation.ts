@@ -25,6 +25,9 @@
 // Interfaces
 // ─────────────────────────────────────────────────────────────────────────────
 
+export type EnvironmentPreset = 'indoor-electrical' | 'outdoor-pad' | 'underground-vault' | 'custom';
+export type ConsumptionPreset = 'low-power' | 'standard' | 'continuous' | 'custom';
+
 export interface SimulationConfig {
   // Transformer Geometry
   transformerType: 'dry-type' | 'oil-immersed';
@@ -47,20 +50,31 @@ export interface SimulationConfig {
   loadPercent: number; // 0–150 %
   harmonicProfile: 'linear' | 'vfd-heavy' | 'server-psu' | 'led-driver' | 'mixed-nonlinear';
   ambientTemp: number; // °C
-  lightingLevel: number; // lux, 0–1000
+
+  // Environment Preset
+  environmentPreset: EnvironmentPreset;
+
+  // Solar Exposure
+  hasSolarCell: boolean;
+  solarCellArea: number; // cm²
+  solarLux: number; // lux during exposure window, 0–120000
+  solarHoursPerDay: number; // hours of light exposure per day, 0–24
+  solarStartHour: number; // hour of day light starts (0–23)
 
   // Front-End Mode
   frontEndMode: 'shared-coil' | 'separate-coils' | 'time-multiplexed';
 
-  // Energy Subsystem
+  // Energy Storage
   storageType: 'supercap' | 'supercap-plus-battery' | 'battery-only';
   supercapSize: number; // Farads, 0.1–10
-  hasSolarCell: boolean;
-  solarCellArea: number; // cm²
 
-  // Communication
+  // Consumption / Duty Cycle
+  consumptionPreset: ConsumptionPreset;
+  senseInterval: number; // seconds between sense events
+  transmitInterval: number; // seconds between transmit events
   commMode: 'ble-minimal' | 'ble-burst' | 'lora' | 'ble-plus-lora';
-  transmitInterval: number; // seconds, 10–3600
+  sleepCurrent: number; // µA during sleep
+  activeCurrent: number; // µA during sense+transmit
 }
 
 export interface SimulationResult {
@@ -76,9 +90,11 @@ export interface SimulationResult {
 
   // Power (all µW)
   harvestPower: number; // magnetic harvest average µW
-  solarPower: number; // solar harvest average µW
-  totalHarvest: number; // µW
+  solarPower: number; // solar harvest average µW (during exposure window)
+  solarDailyAvg: number; // solar averaged over full 24h µW
+  totalHarvest: number; // µW (24h average)
   consumptionPower: number; // device average µW
+  solarWatts: number; // solar output during exposure in W (for display)
 
   // 24-hour energy timeline (one entry per hour, µW)
   energyTimeline: {
@@ -496,12 +512,60 @@ function computeHarvestPower(cfg: SimulationConfig, loadFraction: number): numbe
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Solar cell power output (W).
+ * Solar cell power output (W) at a given lux level.
  * Spec: ~0.15 mW/cm² per 1000 lux → efficiency = 1.5×10⁻⁷ W/(cm²·lux)
+ *
+ * For outdoor direct sunlight: ~100,000 lux
+ * For indoor fluorescent: 300–500 lux
+ * For underground vault: 0–50 lux
  */
 function computeSolarPower(cfg: SimulationConfig, lux: number): number {
   if (!cfg.hasSolarCell) return 0;
   return cfg.solarCellArea * lux * SOLAR_EFF_W_PER_CM2_LUX;
+}
+
+/**
+ * Whether the solar cell is receiving light at this hour of day.
+ * Uses solarStartHour and solarHoursPerDay to define the exposure window.
+ */
+function isSolarActiveAtHour(cfg: SimulationConfig, hour: number): boolean {
+  if (!cfg.hasSolarCell || cfg.solarHoursPerDay <= 0) return false;
+  const start = cfg.solarStartHour;
+  const end = start + cfg.solarHoursPerDay;
+  // Handle wrap-around past midnight
+  if (end <= 24) {
+    return hour >= start && hour < end;
+  } else {
+    return hour >= start || hour < (end - 24);
+  }
+}
+
+/**
+ * Lux level at a given hour, with smooth ramp-up/ramp-down at edges.
+ * Models ~30min transition at dawn/dusk for outdoor, instant for indoor.
+ */
+function solarLuxAtHour(cfg: SimulationConfig, hour: number): number {
+  if (!cfg.hasSolarCell || cfg.solarHoursPerDay <= 0) return 0;
+  const start = cfg.solarStartHour;
+  const end = start + cfg.solarHoursPerDay;
+  const peak = cfg.solarLux;
+
+  // For outdoor environments, add a bell-curve shape peaking at solar noon
+  if (cfg.environmentPreset === 'outdoor-pad') {
+    const mid = start + cfg.solarHoursPerDay / 2;
+    let h = hour;
+    // Handle wrap
+    if (end > 24 && hour < start) h += 24;
+    if (h < start || h >= end) return 0;
+    // Gaussian-ish: peak at solar noon, ~60% at edges
+    const t = (h - start) / cfg.solarHoursPerDay; // 0–1
+    const bellFactor = Math.sin(t * Math.PI); // 0ₒ1ₒ0
+    return peak * Math.max(0.1, bellFactor);
+  }
+
+  // Indoor: constant lux during exposure window, 0 outside
+  if (!isSolarActiveAtHour(cfg, hour)) return 0;
+  return peak;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -528,14 +592,24 @@ const COMM_TX_UW: Record<string, number> = {
 /**
  * Average device power consumption (µW) for a given config.
  *
- *   dutyCycle = T_active / T_interval
- *   P_avg = P_sleep × (1 − duty) + P_active × duty
+ * Uses the configurable sleepCurrent and activeCurrent when set,
+ * otherwise falls back to the sub-system budget model.
+ *
+ *   senseDuty = T_active / senseInterval
+ *   txDuty    = T_active / transmitInterval
+ *   P_avg = sleepCurrent × (1 − maxDuty) + activeCurrent × maxDuty
  */
 function computeConsumptionPower(cfg: SimulationConfig): number {
+  const sleepUW = cfg.sleepCurrent;   // µA ≈ µW at ~1V logic
   const txPower = COMM_TX_UW[cfg.commMode] ?? 150;
-  const activePower = P_SENSE_UW + txPower + P_LED_UW + P_ADC_UW;
-  const dutyCycle = T_ACTIVE_S / cfg.transmitInterval;
-  return P_SLEEP_UW * (1 - dutyCycle) + activePower * dutyCycle;
+  const activeUW = cfg.activeCurrent > 0
+    ? cfg.activeCurrent
+    : P_SENSE_UW + txPower + P_LED_UW + P_ADC_UW;
+
+  const senseDuty = T_ACTIVE_S / cfg.senseInterval;
+  const txDuty = T_ACTIVE_S / cfg.transmitInterval;
+  const duty = Math.min(1, Math.max(senseDuty, txDuty));
+  return sleepUW * (1 - duty) + activeUW * duty;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -562,7 +636,9 @@ function dailyLoadFraction(hour: number): number {
   }
 }
 
-/** Lighting level (lux) follows the same shape as load, scaled to peakLux. */
+/** Lighting level (lux) follows the same shape as load, scaled to peakLux.
+ *  @deprecated — used only as fallback; prefer solarLuxAtHour() for new configs.
+ */
 function dailyLuxLevel(hour: number, peakLux: number): number {
   return dailyLoadFraction(hour) * peakLux;
 }
@@ -618,7 +694,8 @@ function runEnergySimulation(cfg: SimulationConfig, consumeUW: number): EnergySi
     for (let min = 0; min < 60; min++) {
       const fracHour = hour + min / 60;
       const loadFrac = dailyLoadFraction(fracHour) * (cfg.loadPercent / 100);
-      const lux = dailyLuxLevel(fracHour, cfg.lightingLevel);
+      // Use new solar window model: lux based on time-of-day exposure
+      const lux = solarLuxAtHour(cfg, fracHour);
 
       const harvestW = computeHarvestPower(cfg, loadFrac) + computeSolarPower(cfg, lux);
       const netW = harvestW - consumeW;
@@ -754,11 +831,22 @@ export function runSimulation(cfg: SimulationConfig): SimulationResult {
   const harvestPowerW = computeHarvestPower(cfg, cfg.loadPercent / 100);
   const harvestPowerUW = harvestPowerW * 1e6;
 
-  // Daytime average lux (roughly 65 % of peak, accounts for diurnal pattern)
-  const avgDaytimeLux = cfg.lightingLevel * 0.65;
-  const solarPowerUW = computeSolarPower(cfg, avgDaytimeLux) * 1e6;
+  // Solar: compute peak (during exposure) and 24h daily average
+  const solarPeakW = computeSolarPower(cfg, cfg.solarLux); // W at peak lux
+  const solarPeakUW = solarPeakW * 1e6;
 
-  const totalHarvestUW = harvestPowerUW + solarPowerUW;
+  // Average solar across the full 24h using the exposure window model
+  let solarDayAccumW = 0;
+  for (let h = 0; h < 24; h++) {
+    for (let m = 0; m < 60; m++) {
+      const frac = h + m / 60;
+      solarDayAccumW += computeSolarPower(cfg, solarLuxAtHour(cfg, frac));
+    }
+  }
+  const solarDailyAvgUW = (solarDayAccumW / 1440) * 1e6;
+
+  // Total harvest uses the 24h daily average for solar (not peak)
+  const totalHarvestUW = harvestPowerUW + solarDailyAvgUW;
   const consumptionUW = computeConsumptionPower(cfg);
 
   // ── Energy Timeline ────────────────────────────────────────────────────────
@@ -777,9 +865,11 @@ export function runSimulation(cfg: SimulationConfig): SimulationResult {
     kFactor,
 
     harvestPower: harvestPowerUW,
-    solarPower: solarPowerUW,
+    solarPower: solarPeakUW,
+    solarDailyAvg: solarDailyAvgUW,
     totalHarvest: totalHarvestUW,
     consumptionPower: consumptionUW,
+    solarWatts: solarPeakW,
 
     energyTimeline: timeline,
 
@@ -792,54 +882,161 @@ export function runSimulation(cfg: SimulationConfig): SimulationResult {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Default configuration — 500 kVA dry-type transformer, typical installation
+// Environment Presets
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Returns a ready-to-use default SimulationConfig for a 500 kVA dry-type
- * transformer in a typical commercial/industrial installation.
- * Produces a VIABLE result out of the box to give a positive first impression.
- */
+export interface EnvironmentPresetValues {
+  solarLux: number;
+  solarHoursPerDay: number;
+  solarStartHour: number;
+  ambientTemp: number;
+  hasSolarCell: boolean;
+}
+
+export const ENVIRONMENT_PRESETS: Record<EnvironmentPreset, EnvironmentPresetValues> = {
+  'indoor-electrical': {
+    solarLux: 400,
+    solarHoursPerDay: 12,
+    solarStartHour: 7,
+    ambientTemp: 25,
+    hasSolarCell: true,
+  },
+  'outdoor-pad': {
+    solarLux: 80000,
+    solarHoursPerDay: 10,
+    solarStartHour: 7,
+    ambientTemp: 35,
+    hasSolarCell: true,
+  },
+  'underground-vault': {
+    solarLux: 20,
+    solarHoursPerDay: 8,
+    solarStartHour: 8,
+    ambientTemp: 20,
+    hasSolarCell: true,
+  },
+  custom: {
+    solarLux: 400,
+    solarHoursPerDay: 12,
+    solarStartHour: 7,
+    ambientTemp: 25,
+    hasSolarCell: true,
+  },
+};
+
+export function applyEnvironmentPreset(preset: EnvironmentPreset): Partial<SimulationConfig> {
+  const v = ENVIRONMENT_PRESETS[preset];
+  return {
+    environmentPreset: preset,
+    solarLux: v.solarLux,
+    solarHoursPerDay: v.solarHoursPerDay,
+    solarStartHour: v.solarStartHour,
+    ambientTemp: v.ambientTemp,
+    hasSolarCell: v.hasSolarCell,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Consumption Presets
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface ConsumptionPresetValues {
+  senseInterval: number;
+  transmitInterval: number;
+  sleepCurrent: number;
+  activeCurrent: number;
+  commMode: SimulationConfig['commMode'];
+}
+
+export const CONSUMPTION_PRESETS: Record<ConsumptionPreset, ConsumptionPresetValues> = {
+  'low-power': {
+    senseInterval: 300,    // sense every 5 min
+    transmitInterval: 600, // transmit every 10 min
+    sleepCurrent: 3,       // µA
+    activeCurrent: 0,      // 0 = use sub-system budget model
+    commMode: 'ble-minimal',
+  },
+  standard: {
+    senseInterval: 60,     // sense every 1 min
+    transmitInterval: 60,  // transmit every 1 min
+    sleepCurrent: 5,       // µA
+    activeCurrent: 0,
+    commMode: 'ble-minimal',
+  },
+  continuous: {
+    senseInterval: 5,      // sense every 5 sec
+    transmitInterval: 10,  // transmit every 10 sec
+    sleepCurrent: 10,      // µA
+    activeCurrent: 0,
+    commMode: 'ble-burst',
+  },
+  custom: {
+    senseInterval: 60,
+    transmitInterval: 60,
+    sleepCurrent: 5,
+    activeCurrent: 0,
+    commMode: 'ble-minimal',
+  },
+};
+
+export function applyConsumptionPreset(preset: ConsumptionPreset): Partial<SimulationConfig> {
+  const v = CONSUMPTION_PRESETS[preset];
+  return {
+    consumptionPreset: preset,
+    senseInterval: v.senseInterval,
+    transmitInterval: v.transmitInterval,
+    sleepCurrent: v.sleepCurrent,
+    activeCurrent: v.activeCurrent,
+    commMode: v.commMode,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Default configuration — Indoor Electrical Room, 500 kVA dry-type
+// ─────────────────────────────────────────────────────────────────────────────
+
 export function getDefaultConfig(): SimulationConfig {
   return {
     // 500 kVA dry-type (ANSI/NEMA enclosure)
     transformerType: 'dry-type',
     kvaRating: 500,
     tankMaterial: 'mild-steel',
-    wallThickness: 3, // mm — typical 11-gauge sheet steel
+    wallThickness: 3,
 
-    // Approximate NEMA 1 enclosure dimensions for a 500 kVA unit
-    enclosureWidth: 90, // cm
-    enclosureHeight: 130, // cm
-    enclosureDepth: 60, // cm
+    enclosureWidth: 90,
+    enclosureHeight: 130,
+    enclosureDepth: 60,
 
-    // Mount on front face near the coil window (best coupling)
     mountingFace: 'front',
     mountPositionX: 0.50,
     mountPositionY: 0.40,
-    standoffDistance: 2, // mm — thin ferromagnetic pad
-    coreType: 'e-core', // best area/weight ratio
-    padPermeability: 2000, // ferrite-loaded silicone mounting pad
+    standoffDistance: 2,
+    coreType: 'e-core',
+    padPermeability: 2000,
 
-    // 75 % average load — typical commercial building transformer
     loadPercent: 75,
-    harmonicProfile: 'mixed-nonlinear', // office/commercial mix
-    ambientTemp: 25, // °C — climate-controlled MER
-    lightingLevel: 400, // lux — fluorescent/LED mechanical room
+    harmonicProfile: 'mixed-nonlinear',
+    ambientTemp: 25,
 
-    // Separate coils for harvest and sense (optimal)
+    // Environment: Indoor Electrical Room
+    environmentPreset: 'indoor-electrical',
+    hasSolarCell: true,
+    solarCellArea: 4,
+    solarLux: 400,
+    solarHoursPerDay: 12,
+    solarStartHour: 7,
+
     frontEndMode: 'separate-coils',
 
-    // Supercap + coin-cell backup for robustness
     storageType: 'supercap-plus-battery',
-    supercapSize: 1.0, // Farad
+    supercapSize: 1.0,
 
-    // Small indoor amorphous-silicon solar cell
-    hasSolarCell: true,
-    solarCellArea: 4, // cm²
-
-    // BLE-minimal: low power, 1-minute reporting interval
+    // Consumption: Standard
+    consumptionPreset: 'standard',
+    senseInterval: 60,
+    transmitInterval: 60,
     commMode: 'ble-minimal',
-    transmitInterval: 60, // seconds
+    sleepCurrent: 5,
+    activeCurrent: 0,
   };
 }

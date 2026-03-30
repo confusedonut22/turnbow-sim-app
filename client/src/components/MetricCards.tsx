@@ -1,4 +1,4 @@
-import { SimulationResult } from "@/lib/simulation";
+import { SimulationResult, SimulationConfig } from "@/lib/simulation";
 import { Card } from "@/components/ui/card";
 import {
   Zap,
@@ -11,10 +11,12 @@ import {
   ThermometerSun,
   Plug,
   Radio,
+  Clock,
 } from "lucide-react";
 
 interface Props {
   result: SimulationResult;
+  config: SimulationConfig;
 }
 
 function Metric({
@@ -36,33 +38,71 @@ function Metric({
         <Icon className="w-3.5 h-3.5 md:w-4 md:h-4" />
       </div>
       <div className="flex flex-col min-w-0">
-        <span className="text-[10px] md:text-xs text-muted-foreground truncate">{label}</span>
+        <span className="text-[10px] md:text-xs text-muted-foreground truncate">
+          {label}
+        </span>
         <div className="flex items-baseline gap-1">
-          <span className={`text-sm md:text-base font-semibold tabular-nums ${color}`}>{value}</span>
-          <span className="text-[10px] md:text-xs text-muted-foreground">{unit}</span>
+          <span
+            className={`text-sm md:text-base font-semibold tabular-nums ${color}`}
+          >
+            {value}
+          </span>
+          <span className="text-[10px] md:text-xs text-muted-foreground">
+            {unit}
+          </span>
         </div>
       </div>
     </Card>
   );
 }
 
-function SectionLabel({ icon: Icon, label, sublabel }: { icon: typeof Plug; label: string; sublabel: string }) {
+function SectionLabel({
+  icon: Icon,
+  label,
+  sublabel,
+}: {
+  icon: typeof Plug;
+  label: string;
+  sublabel: string;
+}) {
   return (
     <div className="flex items-center gap-2 col-span-2 md:col-span-4 pt-1 first:pt-0">
       <Icon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-      <span className="text-[11px] md:text-xs font-semibold text-foreground uppercase tracking-wider">{label}</span>
-      <span className="text-[10px] md:text-[11px] text-muted-foreground hidden md:inline">— {sublabel}</span>
+      <span className="text-[11px] md:text-xs font-semibold text-foreground uppercase tracking-wider">
+        {label}
+      </span>
+      <span className="text-[10px] md:text-[11px] text-muted-foreground hidden md:inline">
+        — {sublabel}
+      </span>
     </div>
   );
 }
 
-export function MetricCards({ result }: Props) {
+/** Format µW smartly: show mW if > 1000 */
+function fmtPower(uw: number): { value: string; unit: string } {
+  if (Math.abs(uw) >= 1000) {
+    return { value: (uw / 1000).toFixed(2), unit: "mW" };
+  }
+  return { value: uw.toFixed(0), unit: "µW" };
+}
+
+export function MetricCards({ result, config }: Props) {
   const netPower = result.totalHarvest - result.consumptionPower;
   const netColor =
-    netPower > 100 ? "text-emerald-400" : netPower > 0 ? "text-amber-400" : "text-red-400";
+    netPower > 100
+      ? "text-emerald-400"
+      : netPower > 0
+        ? "text-amber-400"
+        : "text-red-400";
+
+  const solarPeak = fmtPower(result.solarPower);
+  const solarAvg = fmtPower(result.solarDailyAvg);
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-2" data-testid="metric-cards">
+    <div
+      className="grid grid-cols-2 md:grid-cols-4 gap-2"
+      data-testid="metric-cards"
+    >
       {/* ── Power Source ── */}
       <SectionLabel
         icon={Plug}
@@ -77,11 +117,18 @@ export function MetricCards({ result }: Props) {
         color="text-emerald-400"
       />
       <Metric
-        label="Harvest (Solar)"
-        value={result.solarPower.toFixed(0)}
-        unit="µW"
+        label={`Solar (peak ${config.solarLux} lux)`}
+        value={solarPeak.value}
+        unit={solarPeak.unit}
         icon={Sun}
         color="text-yellow-400"
+      />
+      <Metric
+        label={`Solar (24h avg)`}
+        value={solarAvg.value}
+        unit={solarAvg.unit}
+        icon={Clock}
+        color="text-yellow-500"
       />
       <Metric
         label="Consumption"
@@ -102,7 +149,13 @@ export function MetricCards({ result }: Props) {
         value={(result.minSOC * 100).toFixed(1)}
         unit="%"
         icon={ThermometerSun}
-        color={result.minSOC > 0.2 ? "text-emerald-400" : result.minSOC > 0.05 ? "text-amber-400" : "text-red-400"}
+        color={
+          result.minSOC > 0.2
+            ? "text-emerald-400"
+            : result.minSOC > 0.05
+              ? "text-amber-400"
+              : "text-red-400"
+        }
       />
       <Metric
         label="Peak Flux"
