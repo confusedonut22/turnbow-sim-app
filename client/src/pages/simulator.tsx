@@ -1,39 +1,13 @@
-import { lazy, Suspense, useState } from "react";
+import { useState } from "react";
 import { useSimulation } from "@/hooks/useSimulation";
 import { ControlPanel } from "@/components/ControlPanel";
 import { ChartPanel } from "@/components/ChartPanel";
 import { VerdictBadge } from "@/components/VerdictBadge";
 import { MetricCards } from "@/components/MetricCards";
-import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { TransformerScene } from "@/components/TransformerScene";
 import { Sheet, SheetContent, SheetTrigger, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
-import { Zap, Box, Loader2, SlidersHorizontal } from "lucide-react";
-
-const TransformerScene = lazy(() =>
-  import("@/components/TransformerScene").then((m) => ({
-    default: m.TransformerScene,
-  }))
-);
-
-function Scene3DFallback() {
-  return (
-    <div className="w-full h-full flex items-center justify-center bg-[#111] text-muted-foreground">
-      <div className="text-center space-y-2">
-        <Box className="w-10 h-10 mx-auto opacity-30" />
-        <p className="text-sm">3D View requires WebGL</p>
-        <p className="text-xs opacity-60">Open in a browser with GPU support</p>
-      </div>
-    </div>
-  );
-}
-
-function Scene3DLoader() {
-  return (
-    <div className="w-full h-full flex items-center justify-center bg-[#111] text-muted-foreground">
-      <Loader2 className="w-6 h-6 animate-spin" />
-    </div>
-  );
-}
+import { Zap, SlidersHorizontal } from "lucide-react";
 
 export default function Simulator() {
   const { config, result, updateConfig, resetConfig } = useSimulation();
@@ -90,11 +64,7 @@ export default function Simulator() {
           {/* 3D Scene */}
           <div className="h-[180px] md:flex-1 shrink-0 md:shrink md:min-h-0 p-2 md:p-3">
             <div className="h-full rounded-lg overflow-hidden border border-border">
-              <ErrorBoundary fallback={<Scene3DFallback />}>
-                <Suspense fallback={<Scene3DLoader />}>
-                  <TransformerScene config={config} result={result} />
-                </Suspense>
-              </ErrorBoundary>
+              <TransformerScene config={config} result={result} />
             </div>
           </div>
 
