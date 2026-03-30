@@ -2,6 +2,7 @@ import {
   SimulationConfig,
   EnvironmentPreset,
   ConsumptionPreset,
+  SolarEfficiencyMode,
   applyEnvironmentPreset,
   applyConsumptionPreset,
 } from "@/lib/simulation";
@@ -29,6 +30,7 @@ import {
   RotateCcw,
   MapPin,
   Gauge,
+  Shield,
 } from "lucide-react";
 
 interface Props {
@@ -608,6 +610,55 @@ export function ControlPanel({ config, onChange, onReset }: Props) {
             unit="F"
             onChange={(v) => onChange({ supercapSize: v })}
           />
+        </Section>
+
+        <Separator />
+
+        {/* ── Realism Controls ── */}
+        <Section title="Realism" icon={Shield}>
+          <SliderField
+            label="System Losses"
+            value={Math.round(config.systemLosses * 100)}
+            min={0}
+            max={60}
+            step={5}
+            unit="%"
+            onChange={(v) => onChange({ systemLosses: v / 100 })}
+          />
+          <div className="text-[10px] text-muted-foreground -mt-1">
+            Rectifier + MPPT + storage inefficiency
+          </div>
+
+          <SelectField
+            label="Solar Efficiency"
+            value={config.solarEfficiencyMode}
+            options={[
+              { value: "conservative", label: "Conservative (Epishine-class)" },
+              { value: "standard", label: "Standard (mid-range aSi)" },
+              { value: "optimistic", label: "Optimistic (best-case spec)" },
+            ]}
+            onChange={(v) =>
+              onChange({
+                solarEfficiencyMode: v as SolarEfficiencyMode,
+              })
+            }
+          />
+
+          {/* Realism readout */}
+          <div className="rounded-md bg-muted/50 p-2 text-[10px] text-muted-foreground space-y-0.5">
+            <div className="flex justify-between">
+              <span>Harvest model</span>
+              <span className="font-mono text-primary">First-principles</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Time stepping</span>
+              <span className="font-mono text-primary">1440 steps/day</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Thermal feedback</span>
+              <span className="font-mono text-primary">Coupled</span>
+            </div>
+          </div>
         </Section>
 
         <div className="h-4" />
